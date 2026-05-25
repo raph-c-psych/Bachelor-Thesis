@@ -711,7 +711,7 @@ rt_exclude_2 <- rt_summary |>
 
 
 ############################################################################################
-# Option A error removal: 40 % fixed error rate
+# Option A error removal: 50 % fixed error rate
 ############################################################################################
 # ---- check participants with over 40% error rate ----
 error_axcpt <- clean_axcpt |>

@@ -14,7 +14,7 @@
 4. Put data from repository in 'data_raw!
 5. Set this repository to working directory
 
-# Currently relevant files
+## Currently relevant files
 
 - *general_preprocessing* 
   - *pre_processing.R*: pre pocessing files for everything 

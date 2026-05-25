@@ -92,6 +92,9 @@ rm(axcpt_data, cuedts_data, sternberg_data, stroop_data)
 
 # ---- function for ICC ----
 calc_corrs <- function(data_temp, rt_weighting){
+  # filter out only one task x modality
+  data_temp <- data_temp |>
+    filter(session == 'baseline' & task == 'axcpt')
   # calculate BIS with choseen weighting
   data_temp <- data_temp |>
     group_by(session, task, phase) |>
@@ -174,96 +177,10 @@ corr_list <- corr_list |>
 
 
 
-# ---- exploring quadratic model -----
-task_modality <- corr_list |> filter(task == 'cuedts' & session == 'reactive')
-
-ggplot(
-  data = task_modality,
-  mapping = aes(x = rt_weight, y = z_r)
-) +
-  geom_point()
-
-# fit quadtatic model
-model <- lm(
-  z_r ~ rt_weight + I(rt_weight^2),
-  data = task_modality
-)
-summary(model)
-
-
-# prediction dataframe
-pred_dat <- tibble(
-  rt_weight = seq(0, 1, length.out = 200)
-) |>
-  mutate(
-    pred = predict(model, newdata = pick(everything()))
-  )
-
-# plot
-ggplot(task_modality, aes(rt_weight, z_r)) +
-  geom_point(size = 2) +
-  geom_line(
-    data = pred_dat,
-    aes(y = pred),
-    linewidth = 1
-  ) +
-  labs(
-    x = "RT Weighting",
-    y = "Correlation"
-  ) +
-  theme_minimal()
 
 
 
-
-
-# ---- multilevel model ----
-mlm <- lmer(
-  z_r ~
-    rt_weight +
-    I(rt_weight^2) +
-    (1 + rt_weight | group),
-  data = corr_list
-)
-summary(mlm)
-
-fe_intercept <- fixef(mlm)['(Intercept)']
-fe_weight <- fixef(mlm)['rt_weight']
-fe_weight2 <- fixef(mlm)['I(rt_weight^2)']
-
-sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & is.na(var2)) |> pull(sdcor)
-sd_re_weight <- as_tibble(VarCorr(mlm))|> filter(var1 == 'rt_weight' & is.na(var2)) |> pull(sdcor)
-cor_re <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & var2 == 'rt_weight') |> pull(sdcor)
-
-extract_names <- ranef(mlm)$group |> row.names()
-
-unname(fixef(mlm))
-
-# plotting random effects
-plot_model(
-  mlm,
-  type = "re"
-)
-
-# now I should bootstrap on the participant level to get a measure of uncertainty of the whole pipeline
-
-
-ggplot(corr_list,
-       aes(rt_weight, z_r, group = group)) +
-  geom_line(alpha = .5) +
-  geom_smooth(
-    aes(group = 1),
-    method = "lm",
-    formula = y ~ x + I(x^2),
-    linewidth = 1.5
-  )
-# well not good, but kind of expected
-
-
-
-
-
-# ---- boot strapping MLM parameters ----
+# ---- boot strapping regression parameters ----
 
 # bootstrapping function
 boot_fun <- function(ids, indices) {
@@ -288,7 +205,7 @@ boot_fun <- function(ids, indices) {
   }
 
   # calculate correlations for all weights
-  weights <- seq(0, 1, by = 0.05)
+  weights <- c(0, 0.5, 1)
 
   corr_list <- tibble()
 
@@ -309,33 +226,12 @@ boot_fun <- function(ids, indices) {
       group = interaction(task, session, sep = "-")
     )
 
-  # centering weight
-  corr_list <- corr_list |>
-    mutate(rt_weight = rt_weight - 0.5)
-  
+  # extract coefficients
+  rt_r <- corr_list |> filter(rt_weight == 1) |> pull(r)
+  bis_r <- corr_list |> filter(rt_weight == 0.5) |> pull(r)
+  er_r <- corr_list |> filter(rt_weight == 0) |> pull(r)
 
-  # fit MLM
-  mlm <- lmer(
-    z_r ~
-      rt_weight +
-      I(rt_weight^2) +
-      (1 + rt_weight | group),
-    data = corr_list
-  )
-
-  # extract values of multilevel model
-  fe_intercept <- fixef(mlm)['(Intercept)']
-  fe_weight <- fixef(mlm)['rt_weight']
-  fe_weight2 <- fixef(mlm)['I(rt_weight^2)']
-
-  sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & is.na(var2)) |> pull(sdcor)
-  sd_re_weight <- as_tibble(VarCorr(mlm))|> filter(var1 == 'rt_weight' & is.na(var2)) |> pull(sdcor)
-  cor_re <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & var2 == 'rt_weight') |> pull(sdcor)
-
-  return(c(
-    fe_intercept, fe_weight, fe_weight2,
-    sd_re_intercept, sd_re_weight, cor_re
-  ))
+  return(c(rt_r, bis_r, er_r))
 }
 
 # saving participant ids, so that bootstrapping can be on participant level
@@ -347,87 +243,77 @@ set.seed(123)
 boot_out <- boot(
   data = participant_ids,
   statistic = boot_fun,
-  R = 5000,
+  R = 500,
   parallel = 'multicore',
   ncpus = 7
 )
 
-saveRDS(boot_out, 'testing_stuff/boot_objects/boot_out_ICC_5000.rds')
-boot_out <- readRDS("testing_stuff/boot_objects/boot_out_ICC_5000.rds")
 
+saveRDS(boot_out, 'other_plots/bakun_re.rds')
+boot_out <- readRDS("other_plots/bakun_re.rds")
+
+# look at estimates
 boot_estimates <- as_tibble(boot_out$t)
-names(boot_estimates)
+names(boot_estimates) <- c("rt_r", "bis_r", "er_r")
 
-# bca vs. perc (bca if more values maybe)
-boot.ci(boot_out, type = "perc", index = 1, conf = 0.9) # linear effect
-# > 0.9 if one sided, bec I assume values should be negative (more RT > less reliable) (only upper)
-boot.ci(boot_out, type = "perc", index = 2, conf = 0.9) # quadratic effect
-
-
-# inspect estimates
-peak_vals <- tibble(
-  peak = boot_out$t[,2]
+# ---- create table of confidence intervals ----
+ci_list <- tibble(
+  index = c(1, 2, 3),
+  type = c("Reaction Time", "BIS", "Error Rate"),
+  mean = NA_real_,
+  lower = NA_real_,
+  upper = NA_real_
 )
-ggplot(data = peak_vals, aes(peak)) +
-  geom_density() 
-# > determining peak doesnt work
 
-# assign names extracted from a singular model above
-names(boot_estimates) <- c("linear_eff", "quadratic_eff", "peak_weight", "axcpt-baseline", "cuedts-baseline", "sternberg-baseline", "stroop-baseline", "axcpt-proactive", "cuedts-proactive", "sternberg-proactive", "stroop-proactive", "axcpt-reactive", "cuedts-reactive", "sternberg-reactive", "stroop-reactive")
-whole_plot_data <- boot_estimates |>
-  pivot_longer(
-    cols = everything(),
-    names_to = "parameter",
-    values_to = "value"
-  ) 
-ci_data <- whole_plot_data |>
-      group_by(parameter) |>
-      summarise(
-        lower = quantile(value, .025, na.rm = TRUE),
-        upper = quantile(value, .975, na.rm = TRUE)
-      )
-whole_plot <- ggplot(whole_plot_data, aes(x = value)) +
-  geom_histogram(
-    bins = 30
-  ) +
-  geom_vline(
-    data = ci_data,
-    aes(xintercept = lower),
-    linetype = "dashed"
-  ) +
-  geom_vline(
-    data = ci_data,
-    aes(xintercept = upper),
-    linetype = "dashed"
-  ) +
-  facet_wrap(
-    ~ parameter,
-    scales = "free"
-  ) +
-  theme_minimal() +
-  theme(
-    plot.background = element_rect(
-      fill = "white",
-      color = NA
-    ),
-    panel.background = element_rect(
-      fill = "white",
-      color = NA
-    ),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.ticks.x = element_line(
-      color = "black",
-      linewidth = 0.6
-    ),
-    axis.ticks.length = unit(0.2, "cm"),
-    axis.line.x = element_line(
-      color = "black",
-      linewidth = 0.6
+for (i in ci_list$index) {
+  
+  ci_out <- boot.ci(boot_out, type = "bca", index = i)
+  
+  ci_list$mean[ci_list$index == i]  <- mean(boot_out$t[, i], na.rm = TRUE)
+  ci_list$lower[ci_list$index == i] <- ci_out$bca[4]
+  ci_list$upper[ci_list$index == i] <- ci_out$bca[5]
+}
+
+# reorder factor for plot
+ci_list <- ci_list |>
+  mutate(type = factor(
+    type, 
+    levels = c("Error Rate", "BIS", "Reaction Time")
     )
   )
 
 
-ggsave(plot = whole_plot, filename = 'testing_stuff/boot_objects/whole_plot_ICC.png', height = 8, width = 10)
+# ---- create plot ----
+# combined plot
+whole_plot <- ggplot(data = ci_list, aes(x = type, y = mean)) +
+  # mean data points
+  geom_point() +
+  geom_errorbar(
+    aes(ymin = lower, ymax = upper),
+    width = 0.2,
+    linewidth = 0.8
+  ) +
+  labs(
+    y = "ICC",
+    x = 'Type of measure'
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.ticks = element_line(color = "black", linewidth = 0.7),
+    panel.grid = element_blank(),      # remove all grid lines
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.line.x = element_line(
+      color = "black"
+    ),
+    axis.line.y = element_line(
+      color = "black",
+      arrow = arrow(length = unit(0.7, "cm"))
+    )
+  )
 
-system("open testing_stuff/boot_objects/whole_plot_ICC.png")
+
+
+ggsave(plot = whole_plot, filename = 'other_plots/bakun_rectreation.png', height = 5, width = 7)
+
+system("open other_plots/bakun_rectreation.png")

@@ -92,6 +92,9 @@ rm(axcpt_data, cuedts_data, sternberg_data, stroop_data)
 
 # ---- function for ICC ----
 calc_corrs <- function(data_temp, rt_weighting){
+  # filter out only one task x modality
+  data_temp <- data_temp |>
+    filter(session == 'baseline' & task == 'axcpt')
   # calculate BIS with choseen weighting
   data_temp <- data_temp |>
     group_by(session, task, phase) |>
@@ -217,53 +220,8 @@ ggplot(task_modality, aes(rt_weight, z_r)) +
 
 
 
-# ---- multilevel model ----
-mlm <- lmer(
-  z_r ~
-    rt_weight +
-    I(rt_weight^2) +
-    (1 + rt_weight | group),
-  data = corr_list
-)
-summary(mlm)
 
-fe_intercept <- fixef(mlm)['(Intercept)']
-fe_weight <- fixef(mlm)['rt_weight']
-fe_weight2 <- fixef(mlm)['I(rt_weight^2)']
-
-sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & is.na(var2)) |> pull(sdcor)
-sd_re_weight <- as_tibble(VarCorr(mlm))|> filter(var1 == 'rt_weight' & is.na(var2)) |> pull(sdcor)
-cor_re <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & var2 == 'rt_weight') |> pull(sdcor)
-
-extract_names <- ranef(mlm)$group |> row.names()
-
-unname(fixef(mlm))
-
-# plotting random effects
-plot_model(
-  mlm,
-  type = "re"
-)
-
-# now I should bootstrap on the participant level to get a measure of uncertainty of the whole pipeline
-
-
-ggplot(corr_list,
-       aes(rt_weight, z_r, group = group)) +
-  geom_line(alpha = .5) +
-  geom_smooth(
-    aes(group = 1),
-    method = "lm",
-    formula = y ~ x + I(x^2),
-    linewidth = 1.5
-  )
-# well not good, but kind of expected
-
-
-
-
-
-# ---- boot strapping MLM parameters ----
+# ---- boot strapping regression parameters ----
 
 # bootstrapping function
 boot_fun <- function(ids, indices) {
@@ -309,32 +267,21 @@ boot_fun <- function(ids, indices) {
       group = interaction(task, session, sep = "-")
     )
 
-  # centering weight
-  corr_list <- corr_list |>
-    mutate(rt_weight = rt_weight - 0.5)
-  
-
   # fit MLM
-  mlm <- lmer(
+  model <- lm(
     z_r ~
-      rt_weight +
-      I(rt_weight^2) +
-      (1 + rt_weight | group),
+      rt_weight,
     data = corr_list
   )
 
-  # extract values of multilevel model
-  fe_intercept <- fixef(mlm)['(Intercept)']
-  fe_weight <- fixef(mlm)['rt_weight']
-  fe_weight2 <- fixef(mlm)['I(rt_weight^2)']
-
-  sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & is.na(var2)) |> pull(sdcor)
-  sd_re_weight <- as_tibble(VarCorr(mlm))|> filter(var1 == 'rt_weight' & is.na(var2)) |> pull(sdcor)
-  cor_re <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & var2 == 'rt_weight') |> pull(sdcor)
+  # extract coefficients
+  coefs <- coef(model)
+  intercept <- coefs["(Intercept)"]
+  slope <- coefs["rt_weight"]
 
   return(c(
-    fe_intercept, fe_weight, fe_weight2,
-    sd_re_intercept, sd_re_weight, cor_re
+    intercept = unname(intercept),
+    slope = unname(slope)
   ))
 }
 
@@ -347,87 +294,78 @@ set.seed(123)
 boot_out <- boot(
   data = participant_ids,
   statistic = boot_fun,
-  R = 5000,
+  R = 50,
   parallel = 'multicore',
   ncpus = 7
 )
 
-saveRDS(boot_out, 'testing_stuff/boot_objects/boot_out_ICC_5000.rds')
-boot_out <- readRDS("testing_stuff/boot_objects/boot_out_ICC_5000.rds")
 
 boot_estimates <- as_tibble(boot_out$t)
-names(boot_estimates)
-
-# bca vs. perc (bca if more values maybe)
-boot.ci(boot_out, type = "perc", index = 1, conf = 0.9) # linear effect
-# > 0.9 if one sided, bec I assume values should be negative (more RT > less reliable) (only upper)
-boot.ci(boot_out, type = "perc", index = 2, conf = 0.9) # quadratic effect
+names(boot_estimates) <- c("intercept", "slope")
 
 
-# inspect estimates
-peak_vals <- tibble(
-  peak = boot_out$t[,2]
+# ---- create plot ----
+
+# determine x range from real data
+x_vals <- seq(
+  min(corr_list$rt_weight),
+  max(corr_list$rt_weight),
+  length.out = 100
 )
-ggplot(data = peak_vals, aes(peak)) +
-  geom_density() 
-# > determining peak doesnt work
 
-# assign names extracted from a singular model above
-names(boot_estimates) <- c("linear_eff", "quadratic_eff", "peak_weight", "axcpt-baseline", "cuedts-baseline", "sternberg-baseline", "stroop-baseline", "axcpt-proactive", "cuedts-proactive", "sternberg-proactive", "stroop-proactive", "axcpt-reactive", "cuedts-reactive", "sternberg-reactive", "stroop-reactive")
-whole_plot_data <- boot_estimates |>
-  pivot_longer(
-    cols = everything(),
-    names_to = "parameter",
-    values_to = "value"
-  ) 
-ci_data <- whole_plot_data |>
-      group_by(parameter) |>
-      summarise(
-        lower = quantile(value, .025, na.rm = TRUE),
-        upper = quantile(value, .975, na.rm = TRUE)
-      )
-whole_plot <- ggplot(whole_plot_data, aes(x = value)) +
-  geom_histogram(
-    bins = 30
+# create bootstrap line data
+plot_data <- boot_estimates |>
+  mutate(id = row_number()) |>
+  crossing(x = x_vals) |>
+  mutate(y = intercept + slope * x)
+
+# combined plot
+whole_plot <- ggplot() +
+  
+  # bootstrap lines
+  geom_line(
+    data = plot_data,
+    aes(x = x, y = y, group = id),
+    alpha = 0.2
   ) +
-  geom_vline(
-    data = ci_data,
-    aes(xintercept = lower),
-    linetype = "dashed"
+  
+  # real data points
+  geom_point(
+    data = corr_list,
+    aes(x = rt_weight, y = z_r),
   ) +
-  geom_vline(
-    data = ci_data,
-    aes(xintercept = upper),
-    linetype = "dashed"
+  
+  # regression line from real data
+  geom_smooth(
+    data = corr_list,
+    aes(x = rt_weight, y = z_r),
+    method = "lm",
+    formula = y ~ x,
+    color = "black",
+    se = FALSE,
+    linewidth = 1.2
   ) +
-  facet_wrap(
-    ~ parameter,
-    scales = "free"
+  labs(
+    x = "Weight of RT",
+    y = "ICC (Fisher z-trans.)"
   ) +
-  theme_minimal() +
+  theme_minimal(base_size = 16) +
   theme(
-    plot.background = element_rect(
-      fill = "white",
-      color = NA
-    ),
-    panel.background = element_rect(
-      fill = "white",
-      color = NA
-    ),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.ticks.x = element_line(
-      color = "black",
-      linewidth = 0.6
-    ),
-    axis.ticks.length = unit(0.2, "cm"),
+    axis.ticks = element_line(color = "black", linewidth = 0.7),
+    panel.grid = element_blank(),      # remove all grid lines
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
     axis.line.x = element_line(
+      color = "black"
+    ),
+    axis.line.y = element_line(
       color = "black",
-      linewidth = 0.6
+      arrow = arrow(length = unit(0.7, "cm"))
     )
   )
 
 
-ggsave(plot = whole_plot, filename = 'testing_stuff/boot_objects/whole_plot_ICC.png', height = 8, width = 10)
 
-system("open testing_stuff/boot_objects/whole_plot_ICC.png")
+ggsave(plot = whole_plot, filename = 'other_plots/lin_boot_exp.png', height = 5, width = 7)
+
+system("open other_plots/lin_boot_exp.png")

@@ -317,6 +317,10 @@ boot_fun <- function(ids, indices) {
     mutate(
       z_r = fisherz(correlation),
     )
+  
+  # centering weight
+  corr_list <- corr_list |>
+    mutate(rt_weight = rt_weight - 0.5)
 
   # fit MLM
   mlm <- lmer(
@@ -327,28 +331,19 @@ boot_fun <- function(ids, indices) {
     data = corr_long
   )
 
-  # extract fixed effects
-  fe <- fixef(mlm)
+  # extract values of multilevel model
+  fe_intercept <- fixef(mlm)['(Intercept)']
+  fe_weight <- fixef(mlm)['rt_weight']
+  fe_weight2 <- fixef(mlm)['I(rt_weight^2)']
 
-  linear <- fe["rt_weight"]
-  quadratic <- fe["I(rt_weight^2)"]
-  peak <- -linear / (2 * quadratic)
+  sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & is.na(var2)) |> pull(sdcor)
+  sd_re_weight <- as_tibble(VarCorr(mlm))|> filter(var1 == 'rt_weight' & is.na(var2)) |> pull(sdcor)
+  cor_re <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & var2 == 'rt_weight') |> pull(sdcor)
 
-  # extract random effects
-  re <- ranef(mlm)$group
-  # full group-specific linear slopes
-  group_linear <- linear + re[, "rt_weight"]
-  # rename clearly
-  names(group_linear) <- paste0(
-    "linear_",
-    rownames(re)
-  )
 
   return(c(
-    linear = unname(linear),
-    quadratic = unname(quadratic),
-    peak = unname(peak),
-    group_linear # names will be lost, but can be checked through singular model
+    fe_intercept, fe_weight, fe_weight2,
+    sd_re_intercept, sd_re_weight, cor_re
   ))
 }
 
@@ -373,8 +368,8 @@ boot_estimates <- as_tibble(boot_out$t)
 names(boot_estimates)
 
 # bca vs. perc (bca if more values maybe)
-boot.ci(boot_out, type = "bca", index = 1) # linear effect , conf = 0.9
-boot.ci(boot_out, type = "bca", index = 2) # quadratic effect
+boot.ci(boot_out, type = "perc", index = 1, conf = 0.9) # linear effect , conf = 0.9
+boot.ci(boot_out, type = "perc", index = 2, conf = 0.9) # quadratic effect
 boot.ci(boot_out, type = "bca", index = 3) # peak weight
 
 # inspect estimates

@@ -283,14 +283,22 @@ mlm <- lmer(
   data = corr_rt_opt
 )
 summary(mlm)
-fixef(mlm)
-unname(fixef(mlm))
+
+# extract values
+fixef(mlm) 
+
+fe_intercept <- fixef(mlm)['(Intercept)']
+fe_weighttype <- fixef(mlm)['weight_typert']
+
+sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)') |> pull(sdcor)
+
 
 # plotting random effects
 plot_model(
   mlm,
   type = "re"
 )
+
 
 
 
@@ -380,9 +388,10 @@ boot_fun <- function(ids, indices) {
     data = corr_rt_opt
   )
 
-  fe_rt_opt <- fixef(mlm_rt_opt)
+  rt_fe_intercept <- fixef(mlm_rt_opt)['(Intercept)']
+  rt_fe_weighttype <- fixef(mlm_rt_opt)['weight_typeoptimal']
 
-  rt_vs_opt <- fe_rt_opt["weight_typeoptimal"]
+  rt_sd_re_intercept <- as_tibble(VarCorr(mlm_rt_opt))|> filter(var1 == '(Intercept)') |> pull(sdcor)
 
 
   # ER vs optimal
@@ -395,15 +404,16 @@ boot_fun <- function(ids, indices) {
     data = corr_er_opt
   )
 
-  fe_er_opt <- fixef(mlm_er_opt)
+  er_fe_intercept <- fixef(mlm_er_opt)['(Intercept)']
+  er_fe_weighttype <- fixef(mlm_er_opt)['weight_typeoptimal']
 
-  er_vs_opt <- fe_er_opt["weight_typeoptimal"]
+  er_sd_re_intercept <- as_tibble(VarCorr(mlm_er_opt))|> filter(var1 == '(Intercept)') |> pull(sdcor)
 
 
   # return bootstrap estimates
   return(c(
-    rt_vs_opt = unname(rt_vs_opt),
-    er_vs_opt = unname(er_vs_opt)
+    rt_fe_intercept, rt_fe_weighttype, rt_sd_re_intercept,
+    er_fe_intercept, er_fe_weighttype, er_sd_re_intercept
   ))
 }
 
@@ -418,21 +428,41 @@ boot_out <- boot(
   statistic = boot_fun,
   R = 5000,
   parallel = 'multicore',
-  ncpus = 7
+  ncpus = 6
 )
 
 saveRDS(boot_out, 'testing_stuff/boot_objects/boot_hyp3_5000.rds')
 boot_out <- readRDS("testing_stuff/boot_objects/boot_hyp3_5000.rds")
 
+
 boot_estimates <- as_tibble(boot_out$t)
-names(boot_estimates)
-
-# bca vs. perc (bca if more values maybe)
-boot.ci(boot_out, type = "bca", index = 1) # effect rt vs. optimal
-boot.ci(boot_out, type = "bca", index = 2) # effect er vs. optimal
+names(boot_estimates) <- c('rt_fe_intercept', 'rt_fe_weighttype', 'rt_re_se_intercept', 'er_fe_intercept', 'er_fe_weighttype', 'er_re_se_intercept')
 
 
+# ---- extracting bca confidence intervals ----
 
+# tibble to save all values
+ci_data <- tibble(
+  index = 1:6,
+  parameter = c('rt_fe_intercept', 'rt_fe_weighttype', 'rt_re_se_intercept', 'er_fe_intercept', 'er_fe_weighttype', 'er_re_se_intercept'),
+  t0_estimate = NA_real_,
+  upper = NA_real_,
+  lower = NA_real_
+)
+
+for (i in ci_data$index){
+  # calculate ci
+  ci_temp <- boot.ci(boot_out, type = "perc", index = i)
+
+  # extract parameters
+  ci_data[i, 't0_estimate'] <- unname(ci_temp$t0)
+  ci_data[i, 'upper'] <-  unname(ci_temp$percent[1,5])
+  ci_data[i, 'lower'] <- unname(ci_temp$percent[1,4])
+}
+
+
+
+# ---- creating plot ----
 
 whole_plot_data <- boot_estimates |>
   pivot_longer(
@@ -440,12 +470,6 @@ whole_plot_data <- boot_estimates |>
     names_to = "parameter",
     values_to = "value"
   ) 
-ci_data <- whole_plot_data |>
-      group_by(parameter) |>
-      summarise(
-        lower = quantile(value, .025, na.rm = TRUE),
-        upper = quantile(value, .975, na.rm = TRUE)
-      )
 whole_plot <- ggplot(whole_plot_data, aes(x = value)) +
   geom_histogram(
     bins = 30
