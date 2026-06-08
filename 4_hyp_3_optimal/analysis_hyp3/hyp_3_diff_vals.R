@@ -437,8 +437,8 @@ boot_out <- boot(
   #ncpus = 7
 )
 
-saveRDS(boot_out, 'testing_stuff/boot_objects/boot_hyp3_5000.rds')
-boot_out <- readRDS("testing_stuff/boot_objects/boot_hyp3_5000.rds")
+saveRDS(boot_out, '4_hyp_3_optimal/analysis_hyp3/boot_hyp3_5000.rds')
+boot_out <- readRDS("4_hyp_3_optimal/analysis_hyp3/boot_hyp3_5000.rds")
 
 
 boot_estimates <- as_tibble(boot_out$t)
@@ -489,18 +489,63 @@ whole_plot_data <- boot_estimates |>
     cols = everything(),
     names_to = "parameter",
     values_to = "value"
-  ) 
+  ) |>
+  mutate(
+    parameter = case_when(
+      parameter == 'rt_fe_intercept' ~ 'RT: Fixed Intercept',
+      parameter == 'rt_fe_weighttype' ~ 'RT: Fixed Effect Weight',
+      parameter == 'rt_re_se_intercept' ~ 'RT: Random Intercept (SD)',
+      parameter == 'er_fe_intercept' ~ 'ER: Fixed Intercept',
+      parameter == 'er_fe_weighttype' ~ 'ER: Fixed Effect Weight',
+      parameter == 'er_re_se_intercept' ~ 'ER: Random Intercept (SD)'
+    ),
+    parameter = factor(
+      parameter,
+      levels = c(
+        "RT: Fixed Intercept",
+        "RT: Fixed Effect Weight",
+        "RT: Random Intercept (SD)",
+        "ER: Fixed Intercept",
+        "ER: Fixed Effect Weight",
+        "ER: Random Intercept (SD)"
+      )
+    )
+  )
+ci_data_plot <- ci_data |>
+  mutate(
+    parameter = case_when(
+      parameter == 'rt_fe_intercept' ~ 'RT: Fixed Intercept',
+      parameter == 'rt_fe_weighttype' ~ 'RT: Fixed Effect Weight',
+      parameter == 'rt_re_se_intercept' ~ 'RT: Random Intercept (SD)',
+      parameter == 'er_fe_intercept' ~ 'ER: Fixed Intercept',
+      parameter == 'er_fe_weighttype' ~ 'ER: Fixed Effect Weight',
+      parameter == 'er_re_se_intercept' ~ 'ER: Random Intercept (SD)'
+    ),
+    parameter = factor(
+      parameter,
+      levels = c(
+        "RT: Fixed Intercept",
+        "RT: Fixed Effect Weight",
+        "RT: Random Intercept (SD)",
+        "ER: Fixed Intercept",
+        "ER: Fixed Effect Weight",
+        "ER: Random Intercept (SD)"
+      )
+    )
+  )
+
+
 whole_plot <- ggplot(whole_plot_data, aes(x = value)) +
   geom_histogram(
     bins = 30
   ) +
   geom_vline(
-    data = ci_data,
+    data = ci_data_plot,
     aes(xintercept = lower),
     linetype = "dashed"
   ) +
   geom_vline(
-    data = ci_data,
+    data = ci_data_plot,
     aes(xintercept = upper),
     linetype = "dashed"
   ) +
@@ -519,13 +564,21 @@ whole_plot <- ggplot(whole_plot_data, aes(x = value)) +
       color = NA
     ),
     panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
-
+    panel.grid.minor = element_blank(),
+    axis.ticks.x = element_line(
+      color = "black",
+      linewidth = 0.6
+    ),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line.x = element_line(
+      color = "black",
+      linewidth = 0.6
+    )
   )
 
 
-ggsave(plot = whole_plot, filename = 'testing_stuff/boot_objects/whole_plot_hyp3.png', height = 8, width = 10)
+ggsave(plot = whole_plot, filename = '4_hyp_3_optimal/analysis_hyp3/hyp_3_distrib.png', height = 8, width = 10)
 
-system("open testing_stuff/boot_objects/whole_plot_hyp3.png")
+system("open 4_hyp_3_optimal/analysis_hyp3/hyp_3_distrib.png")
 
 

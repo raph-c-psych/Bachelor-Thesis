@@ -1,9 +1,10 @@
 library(tidyverse)
-library(patchwork)
-library(purrr)
+library(lme4)
+library(sjPlot)
+library(boot)
+library(psych)
 
-
-
+# ---- pre processing data -----
 # -- axcpt
 # grouping by ID, trialType (congruency), session (reactive/baseline), phase (test/retest)
 # ACC, RT
@@ -87,6 +88,8 @@ rm(axcpt_data, cuedts_data, sternberg_data, stroop_data)
 
 
 
+
+# ---- function: calculating correlations between sessions through pearson ----
 calc_corrs <- function(data_temp, rt_weighting){
   # calculate BIS with choseen weighting
   data_temp <- data_temp |>
@@ -127,20 +130,26 @@ calc_corrs <- function(data_temp, rt_weighting){
   return(all_corr)
 }
 
+
+
+
+
+# ---- testing function to create correlations for different weights ----
 # calculating correlation matrixes for different weights
-weights <- seq(0, 1, by = 0.25)
-corr_list <- list()
+weights <- seq(0, 1, by = 0.05)
+corr_long <- tibble(
+  rt_weight = numeric(),
+  correlation = numeric(),
+  group = character()
+)
 for (curr_weight in weights) {
+  # take only test data
   mod_data <- all_data |>
     filter(phase == "test")
+  # create correlation matrix for current weight between all sessions
   corr_matrix <- calc_corrs(mod_data, curr_weight)
-  corr_list[[as.character(curr_weight)]] <- corr_matrix
-}
-
-
-corr_long <- imap_dfr(
-  corr_list,
-  ~ .x |>
+  # create clean long format of correlations
+  corr_data <- corr_matrix |>
     as.data.frame() |>
     rownames_to_column("var1") |>
     pivot_longer(
@@ -148,48 +157,65 @@ corr_long <- imap_dfr(
       names_to = "var2",
       values_to = "correlation"
     ) |>
-    mutate(weight_rt = as.numeric(.y))
-)
+    filter(var1 <= var2) |> # exclude duplicates and auto correlations
+    mutate(rt_weight = as.numeric(curr_weight)) |>
+    mutate(
+      task_1 = str_match(var1, "^CC_(.*?)_(.*?)$")[,2],
+      modality_1 = str_match(var1, "^CC_(.*?)_(.*?)$")[,3],
+      task_2 = str_match(var2, "^CC_(.*?)_(.*?)$")[,2],
+      modality_2 = str_match(var2, "^CC_(.*?)_(.*?)$")[,3]
+    ) |>
+    select(-c(var1, var2))
+    # filter(task_1 != task_2) |> # different tasks
+    # filter(modality_1 == modality_2)# |>
+    # mutate(group = paste0(str_sub(var1, 4), '-', str_sub(var2, 4))) |>
+    # select(-c(var1, var2, task_1, task_2, modality_1, modality_2))
+  corr_long <- rbind(corr_long, corr_data)
+}
+rm(corr_matrix, mod_data, curr_weight, weights, corr_data)
 
-corr_long <- corr_long |>
+
+# naming
+corr_list <- corr_long |>
   mutate(
-    var1 = var1 |>
-      gsub("^CC_", "", x = _) |>
-      gsub("_", " ", x = _) |>
-      tools::toTitleCase() |>
-      gsub(" ", "\n", x = _),
-    var2 = var2 |>
-      gsub("^CC_", "", x = _) |>
-      gsub("_", " ", x = _) |>
-      tools::toTitleCase() |>
-      gsub(" ", "\n", x = _)
-  ) |>
-  mutate(
-    task1 = sub("^([A-Za-z]+).*", "\\1", var1),
-    task2 = sub("^([A-Za-z]+).*", "\\1", var2),
-    corr_type = ifelse(
-      task1 == task2,
-      "Within Task",
-      "Between Task"
-    )
+    task_1 = case_when(
+      task_1 == 'axcpt' ~ 'AX-CPT', 
+      task_1 == 'cuedts' ~ 'Cued TS', 
+      task_1 == 'sternberg' ~ 'Sternberg', 
+      task_1 == 'stroop' ~ 'Stroop'
+    ),
+    task_2 = case_when(
+      task_2 == 'axcpt' ~ 'AX-CPT', 
+      task_2 == 'cuedts' ~ 'Cued TS', 
+      task_2 == 'sternberg' ~ 'Sternberg', 
+      task_2 == 'stroop' ~ 'Stroop'
+    ),
+    session_1 = paste(task_1, modality_1, sep = "\n"),
+    session_2 = paste(task_2, modality_2, sep = "\n")
   )
 
 
-corr_plot <- ggplot(
-  corr_long,
-  aes(x = weight_rt, y = correlation, color = corr_type)
+
+# ---- visualize the trends ----
+
+corr_trend_plot <- ggplot(
+  corr_list,
+  aes(
+    x = rt_weight,
+    y = correlation
+  )
 ) +
+  geom_point(size = 0.5) +
   geom_line() +
-  geom_point(size = 1.5) +
-  facet_grid(var1 ~ var2) +
-  labs(
-    x = "RT Weight",
-    y = "Correlation",
-    color = "Correlation Type",
-    title = "Correlations Across BIS Weightings"
+  facet_grid(session_1 ~ session_2) +
+  scale_y_continuous(limits = c(-1, 1)) +
+  scale_x_continuous(
+    breaks = c(0, 0.5, 1)
   ) +
-  scale_y_continuous(
-    limits = c(-1, 1)
+  labs(
+    y = "Correlation",
+    x = "Weight of RT",
+    shape = "Condition"
   ) +
   geom_hline(
     yintercept = 0,
@@ -197,11 +223,16 @@ corr_plot <- ggplot(
   ) +
   theme_minimal() +
   theme(
-    strip.text.x = element_text(size = 18),
-    strip.text.y = element_text(size = 18),
-    axis.text.x = element_text(size = 10),
-    axis.text.y = element_text(size = 10),
-    plot.title = element_text(size = 30, face = "bold", hjust = 0.5),
+    strip.text.x = element_text(size = 10),
+    strip.text.y = element_text(size = 10),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1,
+      size = 7
+    ),
+    axis.text.y = element_text(size = 7),
+    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
     plot.background = element_rect(fill = "white", color = NA),
     panel.border = element_rect(
       color = "black",
@@ -216,17 +247,11 @@ corr_plot <- ggplot(
     legend.text = element_text(size = 16)
   )
 
-corr_plot
-
 ggsave(
-  "study_2_validity/plots/correlation_grid.png",
-  corr_plot,
-  width = 20,
-  height = 16
+  "3_hyp_2_conv/plot_trend_hyp2/trend_hyp2.png",
+  corr_trend_plot,
+  width = 10,
+  height = 10
 )
 
-system("open study_2_validity/plots/correlation_grid.png")
-
-
-
-corr_plot
+system("open 3_hyp_2_conv/plot_trend_hyp2/trend_hyp2.png")

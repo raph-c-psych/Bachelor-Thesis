@@ -90,11 +90,11 @@ rm(axcpt_data, cuedts_data, sternberg_data, stroop_data)
 
 
 
-# ---- function: calculating correlations between sessions through pearson ----
+# ---- function for ICC ----
 calc_corrs <- function(data_temp, rt_weighting){
   # calculate BIS with choseen weighting
   data_temp <- data_temp |>
-    group_by(session, task) |>
+    group_by(session, task, phase) |>
     mutate(
       z_RT = as.numeric(scale(mean_RT)),
       z_ER = as.numeric(scale(ER)),
@@ -114,84 +114,71 @@ calc_corrs <- function(data_temp, rt_weighting){
       # CC_retest = BIS_retest_BX - BIS_retest_BY
     )
 
-  # pivot data set for task and modality
+  # pivot data set for phase
   data_temp <- data_temp |>
     pivot_wider(
-      id_cols = ID,
-      names_from = c(task, session),
+      id_cols = c(ID, task, session),
+      names_from = phase,
       values_from = CC_measure,
-      names_glue = "CC_{task}_{session}"
+      names_glue = "CC_{phase}"
     )
-  # calculate correlation matrix
-  all_corr <- data_temp |>
-    select(contains("CC")) |>
-    cor(use = "pairwise.complete.obs")
+  # calculate corellations for each task and modality
+  ICCs <- data_temp |>
+    group_by(task, session) |>
+    summarise(
+      r = psych::ICC(data.frame(CC_test, CC_retest), lmer = FALSE)$results["Single_fixed_raters", "ICC"],
+      n = sum(complete.cases(CC_test, CC_retest)),
+      .groups = "drop"
+    )
 
   # return correlation matrix
-  return(all_corr)
+  return(ICCs)
 }
 
 
 
 
-
-# ---- testing function to create correlations for different weights ----
+# ---- testing ICC function -----
 # calculating correlation matrixes for different weights
 weights <- seq(0, 1, by = 0.05)
-corr_long <- tibble(
+corr_list <- tibble(
   rt_weight = numeric(),
-  correlation = numeric(),
-  group = character()
+  task = character(),
+  session = character(),
+  r = numeric(),
+  n = numeric()
 )
 for (curr_weight in weights) {
-  # take only test data
-  mod_data <- all_data |>
-    filter(phase == "test")
-  # create correlation matrix for current weight between all sessions
-  corr_matrix <- calc_corrs(mod_data, curr_weight)
-  # create clean long format of correlations
-  corr_data <- corr_matrix |>
-    as.data.frame() |>
-    rownames_to_column("var1") |>
-    pivot_longer(
-      cols = -var1,
-      names_to = "var2",
-      values_to = "correlation"
-    ) |>
-    filter(var1 < var2) |> # exclude duplicates and auto correlations
-    mutate(rt_weight = as.numeric(curr_weight)) |>
-      mutate(
-    task_1 = str_match(var1, "^CC_(.*?)_(.*?)$")[,2],
-    modality_1 = str_match(var1, "^CC_(.*?)_(.*?)$")[,3],
-    task_2 = str_match(var2, "^CC_(.*?)_(.*?)$")[,2],
-    modality_2 = str_match(var2, "^CC_(.*?)_(.*?)$")[,3]
-    ) |>
-    filter(task_1 != task_2) |> # different tasks
-    filter(modality_1 == modality_2) |>
-    mutate(group = paste0(str_sub(var1, 4), '-', str_sub(var2, 4))) |>
-    select(-c(var1, var2, task_1, task_2, modality_1, modality_2))
-  corr_long <- rbind(corr_long, corr_data)
+  mod_data <- all_data
+  curr_corrs <- calc_corrs(mod_data, curr_weight) |>
+    mutate(rt_weight = curr_weight)
+  corr_list <- rbind(corr_list, curr_corrs)
 }
-rm(corr_matrix, mod_data, curr_weight, weights, corr_data)
+# multiple failed convergences in cuedts reactive and sternberg proactive
+# all_data |> filter(task == 'cuedts' & session == 'reactive') |> View()
+# curr_corrs <- calc_corrs(mod_data, 1)
+# > doenst converge for 0.2, 0.4, 0.7, 0.9
+# all_data |> filter(task == 'sternberg' & session == 'proactive') |> View()
 
+# remove unused objects
+rm(mod_data, curr_corrs, weights, curr_weight)
 
 
 
 # creating fisher z-transformations and grouping for singular sessions
-corr_long <- corr_long |>
+corr_list <- corr_list |>
   mutate(
-    z_r = fisherz(correlation),
+    z_r = fisherz(r),
+    group = interaction(task, session, sep = '-')
   )
 
 
 
-
-
 # ---- exploring quadratic model -----
-single_corr_test <- corr_long |> filter(group == corr_long$group[1])
+task_modality <- corr_list |> filter(task == 'cuedts' & session == 'reactive')
 
 ggplot(
-  data = single_corr_test,
+  data = task_modality,
   mapping = aes(x = rt_weight, y = z_r)
 ) +
   geom_point()
@@ -199,7 +186,7 @@ ggplot(
 # fit quadtatic model
 model <- lm(
   z_r ~ rt_weight + I(rt_weight^2),
-  data = single_corr_test
+  data = task_modality
 )
 summary(model)
 
@@ -213,7 +200,7 @@ pred_dat <- tibble(
   )
 
 # plot
-ggplot(single_corr_test, aes(rt_weight, z_r)) +
+ggplot(task_modality, aes(rt_weight, z_r)) +
   geom_point(size = 2) +
   geom_line(
     data = pred_dat,
@@ -236,9 +223,19 @@ mlm <- lmer(
     rt_weight +
     I(rt_weight^2) +
     (1 + rt_weight | group),
-  data = corr_long
+  data = corr_list
 )
 summary(mlm)
+
+fe_intercept <- fixef(mlm)['(Intercept)']
+fe_weight <- fixef(mlm)['rt_weight']
+fe_weight2 <- fixef(mlm)['I(rt_weight^2)']
+
+sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & is.na(var2)) |> pull(sdcor)
+sd_re_weight <- as_tibble(VarCorr(mlm))|> filter(var1 == 'rt_weight' & is.na(var2)) |> pull(sdcor)
+cor_re <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & var2 == 'rt_weight') |> pull(sdcor)
+
+extract_names <- ranef(mlm)$group |> row.names()
 
 unname(fixef(mlm))
 
@@ -251,7 +248,7 @@ plot_model(
 # now I should bootstrap on the participant level to get a measure of uncertainty of the whole pipeline
 
 
-ggplot(corr_long,
+ggplot(corr_list,
        aes(rt_weight, z_r, group = group)) +
   geom_line(alpha = .5) +
   geom_smooth(
@@ -293,47 +290,29 @@ boot_fun <- function(ids, indices) {
   # calculate correlations for all weights
   weights <- seq(0, 1, by = 0.05)
 
-  corr_long <- tibble()
+  corr_list <- tibble()
 
-  for (curr_weight in weights) {
-    # take only test data
-    mod_data <- boot_data |>
-      filter(phase == "test")
-    # create correlation matrix for current weight between all sessions
-    corr_matrix <- calc_corrs(mod_data, curr_weight)
-    # create clean long format of correlations
-    corr_data <- corr_matrix |>
-      as.data.frame() |> # to process properly
-      rownames_to_column("var1") |> # to get variable names
-      pivot_longer( # pivot to long instead of matrix format
-        cols = -var1,
-        names_to = "var2",
-        values_to = "correlation"
-      ) |>
-      filter(var1 < var2) |> # exclude duplicates and auto correlations
-      mutate(rt_weight = as.numeric(curr_weight)) |> # save current weight
-      mutate( # extract task and modality of different measures
-        task_1 = str_match(var1, "^CC_(.*?)_(.*?)$")[,2],
-        modality_1 = str_match(var1, "^CC_(.*?)_(.*?)$")[,3],
-        task_2 = str_match(var2, "^CC_(.*?)_(.*?)$")[,2],
-        modality_2 = str_match(var2, "^CC_(.*?)_(.*?)$")[,3]
-      ) |>
-      filter(task_1 != task_2) |> # only different tasks
-      filter(modality_1 == modality_2) |> # only same modality
-      mutate(group = paste0(str_sub(var1, 4), '-', str_sub(var2, 4))) |> # create joint correlation name
-      select(-c(var1, var2, task_1, task_2, modality_1, modality_2)) # remove unnecessary columns
-    corr_long <- rbind(corr_long, corr_data)
+  for(curr_weight in weights) {
+
+    curr_corrs <- calc_corrs(boot_data, curr_weight) |>
+      mutate(
+        rt_weight = curr_weight
+      )
+
+    corr_list <- bind_rows(corr_list, curr_corrs)
   }
 
   # prepare data for MLM
-  corr_long <- corr_long |>
+  corr_list <- corr_list |>
     mutate(
-      z_r = fisherz(correlation),
+      z_r = fisherz(r),
+      group = interaction(task, session, sep = "-")
     )
-  
+
   # centering weight
-  corr_long <- corr_long |>
+  corr_list <- corr_list |>
     mutate(rt_weight = rt_weight - 0.5)
+  
 
   # fit MLM
   mlm <- lmer(
@@ -341,7 +320,7 @@ boot_fun <- function(ids, indices) {
       rt_weight +
       I(rt_weight^2) +
       (1 + rt_weight | group),
-    data = corr_long
+    data = corr_list
   )
 
   # extract values of multilevel model
@@ -352,7 +331,6 @@ boot_fun <- function(ids, indices) {
   sd_re_intercept <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & is.na(var2)) |> pull(sdcor)
   sd_re_weight <- as_tibble(VarCorr(mlm))|> filter(var1 == 'rt_weight' & is.na(var2)) |> pull(sdcor)
   cor_re <- as_tibble(VarCorr(mlm))|> filter(var1 == '(Intercept)' & var2 == 'rt_weight') |> pull(sdcor)
-
 
   return(c(
     fe_intercept, fe_weight, fe_weight2,
@@ -374,8 +352,8 @@ boot_out <- boot(
   ncpus = 7
 )
 
-saveRDS(boot_out, 'testing_stuff/boot_objects/boot_hyp2_5000.rds')
-boot_out <- readRDS("testing_stuff/boot_objects/boot_hyp2_5000.rds")
+saveRDS(boot_out, '2_hyp_1_icc/analysis_hyp1/boot_out_hyp1_5000.rds')
+boot_out <- readRDS("2_hyp_1_icc/analysis_hyp1/boot_out_hyp1_5000.rds")
 
 boot_estimates <- as_tibble(boot_out$t)
 names(boot_estimates) <- c(
@@ -384,7 +362,6 @@ names(boot_estimates) <- c(
   )
 
 
-# ---- extract cis ---
 # tibble to save all values
 ci_data <- tibble(
   index = 1:6,
@@ -405,32 +382,75 @@ for (i in ci_data$index){
 }
 
 # manual one sided cis
-boot.ci(boot_out, type = "perc", index = 2, conf = 0.9) # linear
-boot.ci(boot_out, type = "perc", index = 3, conf = 0.9) # quadratic
+boot.ci(boot_out, type = "perc", index = 2, conf = 0.9) # weight linear
+boot.ci(boot_out, type = "perc", index = 3, conf = 0.9) # weight quadratic
 
 # inverse fisher z intercept
 ci_data[1,3:5]
 
 
-
-# ---- create plot ----
+# assign names extracted from a singular model above
 whole_plot_data <- boot_estimates |>
   pivot_longer(
     cols = everything(),
     names_to = "parameter",
     values_to = "value"
-  ) 
+  ) |>
+  mutate(
+    parameter = case_when(
+      parameter == 'fe_intercept' ~ 'Fixed Intercept',
+      parameter == 'fe_weight' ~ 'Fixed Effect Weight',
+      parameter == 'fe_weight2' ~ 'Fixed Effect Weight^2',
+      parameter == 'sd_re_intercept' ~ 'Random Intercept (SD)',
+      parameter == 'sd_re_weight' ~ 'Random Slope Weight (SD)',
+      parameter == 'cor_re' ~ 'Correlation Random Effects'
+    ),
+    parameter = factor(
+      parameter,
+      levels = c(
+        "Fixed Intercept",
+        "Fixed Effect Weight",
+        "Fixed Effect Weight^2",
+        "Random Intercept (SD)",
+        "Random Slope Weight (SD)",
+        "Correlation Random Effects"
+      )
+    )
+  )
+ci_data_plot <- ci_data |>
+  mutate(
+    parameter = case_when(
+      parameter == 'fe_intercept' ~ 'Fixed Intercept',
+      parameter == 'fe_weight' ~ 'Fixed Effect Weight',
+      parameter == 'fe_weight2' ~ 'Fixed Effect Weight^2',
+      parameter == 'sd_re_intercept' ~ 'Random Intercept (SD)',
+      parameter == 'sd_re_weight' ~ 'Random Slope Weight (SD)',
+      parameter == 'cor_re' ~ 'Correlation Random Effects'
+    ),
+    parameter = factor(
+      parameter,
+      levels = c(
+        "Fixed Intercept",
+        "Fixed Effect Weight",
+        "Fixed Effect Weight^2",
+        "Random Intercept (SD)",
+        "Random Slope Weight (SD)",
+        "Correlation Random Effects"
+      )
+    )
+  )
+
 whole_plot <- ggplot(whole_plot_data, aes(x = value)) +
   geom_histogram(
     bins = 30
   ) +
   geom_vline(
-    data = ci_data,
+    data = ci_data_plot,
     aes(xintercept = lower),
     linetype = "dashed"
   ) +
   geom_vline(
-    data = ci_data,
+    data = ci_data_plot,
     aes(xintercept = upper),
     linetype = "dashed"
   ) +
@@ -449,11 +469,19 @@ whole_plot <- ggplot(whole_plot_data, aes(x = value)) +
       color = NA
     ),
     panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
-
+    panel.grid.minor = element_blank(),
+    axis.ticks.x = element_line(
+      color = "black",
+      linewidth = 0.6
+    ),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line.x = element_line(
+      color = "black",
+      linewidth = 0.6
+    )
   )
 
 
-ggsave(plot = whole_plot, filename = 'testing_stuff/boot_objects/whole_plot_hyp2.png', height = 8, width = 10)
+ggsave(plot = whole_plot, filename = '2_hyp_1_icc/analysis_hyp1/hyp_1_distrib.png', height = 8, width = 10)
 
-system("open testing_stuff/boot_objects/whole_plot_hyp2.png")
+system("open 2_hyp_1_icc/analysis_hyp1/hyp_1_distrib.png")
