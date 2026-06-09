@@ -1,0 +1,13 @@
+"task","session","rt_weight"
+"axcpt","baseline",1
+"axcpt","proactive",1
+"axcpt","reactive",1
+"cuedts","baseline",0.74
+"cuedts","proactive",0.66
+"cuedts","reactive",0.77
+"sternberg","baseline",0.23
+"sternberg","proactive",0.71
+"sternberg","reactive",0
+"stroop","baseline",0.78
+"stroop","proactive",1
+"stroop","reactive",0.53

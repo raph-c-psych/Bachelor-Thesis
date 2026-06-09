@@ -160,6 +160,8 @@ optimal_weights <- icc_list |>
   select(-c(n, r))
 rm(icc_list)
 
+write.table(optimal_weights, file = '4_hyp_3_optimal/analysis_hyp3/optimal_weights.csv', sep = ',', row.names = FALSE)
+optimal_weights <- read_csv('4_hyp_3_optimal/analysis_hyp3/optimal_weights.csv')
 
 
 
