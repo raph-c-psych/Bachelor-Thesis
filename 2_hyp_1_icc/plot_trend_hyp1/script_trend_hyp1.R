@@ -3,6 +3,7 @@ library(lme4)
 library(sjPlot)
 library(boot)
 library(psych)
+library(ggh4x)
 
 
 # ---- pre processing data -----
@@ -170,7 +171,7 @@ corr_list <- corr_list |>
 # ---- visualize the trends ----
 
 icc_trend_plot <- ggplot(data = corr_list, aes(x = rt_weight, y = r, group = session, shape = session)) +
-  geom_point() +
+  geom_point(size = 2.5) +
   geom_line()+
   facet_wrap2(~task, axes = "all") +
   scale_y_continuous(
