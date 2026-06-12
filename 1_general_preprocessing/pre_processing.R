@@ -1,5 +1,6 @@
 # ---- loading packages ----
 library(tidyverse)
+library(psych)
 
 
 
@@ -251,9 +252,37 @@ rm(list = setdiff(
     "clean_axcpt",
     "clean_stroop",
     "clean_cuedts",
-    "clean_sternberg"
+    "clean_sternberg",
+    "complete_sub"
   )
 ))
+
+
+
+# ---- get demographic data ----
+
+# loading demographic data
+raw_demo <- read_csv('../bachelor_data/demographic_data/demo_age.csv')
+id_mturk <- read_csv('../bachelor_data/demographic_data/mturkidkey.csv')
+
+# join together
+demo_ID <- right_join(raw_demo, id_mturk |> rename(ID = mturkid), by = 'ID') |>
+  na.omit() |>
+  select(-ID) |>
+  rename(ID = fakeid)
+
+# extract 
+demo_table <- demo_ID |>
+  mutate(include = ID %in% complete_sub) |>
+  filter(include == TRUE) |>
+  select(-include)
+
+describe(demo_table$demo_age)
+
+ggplot(data = demo_table, aes(x = demo_age)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 20,fill = "lightblue", color = "black") +
+  geom_density(linewidth = 1)
+
 
 
 
