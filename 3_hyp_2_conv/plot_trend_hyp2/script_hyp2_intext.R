@@ -190,69 +190,63 @@ corr_list <- corr_long |>
       task_2 == 'cuedts' ~ 'Cued TS', 
       task_2 == 'sternberg' ~ 'Sternberg', 
       task_2 == 'stroop' ~ 'Stroop'
-    ),
-    session_1 = paste(task_1, modality_1, sep = "\n"),
-    session_2 = paste(task_2, modality_2, sep = "\n")
+    )
+  )
+
+corr_list <- corr_list |>
+  filter(modality_1 == modality_2) |>
+  filter(task_1 != task_2) |>
+  mutate(
+    Combination = paste0(task_1, ' x ', task_2)
   )
 
 
 
 # ---- visualize the trends ----
-
-corr_trend_plot <- ggplot(
-  corr_list,
-  aes(
-    x = rt_weight,
-    y = correlation
-  )
-) +
-  geom_point(size = 0.5) +
-  geom_line() +
-  facet_grid(session_1 ~ session_2) +
-  scale_y_continuous(limits = c(-1, 1)) +
-  scale_x_continuous(
-    breaks = c(0, 0.5, 1)
+corr_trend_plot <- ggplot(data = corr_list, aes(x = rt_weight, y = correlation, group = Combination, shape = Combination)) +
+  geom_point(size = 2.5) +
+  geom_line()+
+  facet_wrap2(~modality_1, axes = "all", ncol = 2) +
+  scale_y_continuous(
+    limits = c(-0.5, 0.5)
   ) +
   labs(
-    y = "Correlation (Fisher-z trans.)",
-    x = "Weight of RT",
-    shape = "Condition"
-  ) +
-  geom_hline(
-    yintercept = 0,
-    linetype = "dashed"
+    y = 'Correlation (Fisher-z trans.)',
+    x = 'Weight of RT',
+    shape = 'Task Combination'
   ) +
   theme_minimal() +
   theme(
-    strip.text.x = element_text(size = 10),
-    strip.text.y = element_text(size = 10),
-    axis.text.x = element_text(
-      angle = 45,
-      hjust = 1,
-      vjust = 1,
-      size = 7
-    ),
-    axis.text.y = element_text(size = 7),
-    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
-    plot.background = element_rect(fill = "white", color = NA),
-    panel.border = element_rect(
-      color = "black",
-      fill = NA,
-      linewidth = 0.5
-    ),
+    strip.text.x = element_text(size = 18),
+    strip.text.y = element_text(size = 18),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    plot.title = element_text(size = 30, face = "bold", hjust = 0.5),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     axis.title.x = element_text(size = 20),
     axis.title.y = element_text(size = 20),
     legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16)
+    legend.text = element_text(size = 16),
+    axis.ticks = element_line(color = "black", linewidth = 0.7),
+    panel.grid = element_blank(),      # remove all grid lines
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.line.x = element_line(
+      color = "black"
+    ),
+    axis.line.y = element_line(
+      color = "black",
+      arrow = arrow(length = unit(0.7, "cm")))
   )
 
+
 ggsave(
-  "3_hyp_2_conv/plot_trend_hyp2/trend_hyp2.png",
+  "3_hyp_2_conv/plot_trend_hyp2/hyp2_intext.png",
   corr_trend_plot,
-  width = 10,
+  width = 12,
   height = 10
 )
 
-system("open 3_hyp_2_conv/plot_trend_hyp2/trend_hyp2.png")
+system("open 3_hyp_2_conv/plot_trend_hyp2/hyp2_intext.png")
+

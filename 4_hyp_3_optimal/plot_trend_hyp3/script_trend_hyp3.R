@@ -247,7 +247,7 @@ for (curr_type in types_weight) {
       names_to = "var2",
       values_to = "correlation"
     ) |>
-    filter(var1 <= var2) |> # exclude duplicates and auto correlations
+    filter(var1 < var2) |> # exclude duplicates and auto correlations
     mutate(weight_type = curr_type) |>
     mutate(
       task_1 = str_match(var1, "^CC_(.*?)_(.*?)$")[,2],
@@ -266,6 +266,7 @@ rm(corr_data, corr_matrix, mod_data, curr_type, types_weight, er_weights, rt_wei
 # naming
 corr_list <- corr_long |>
   mutate(
+    correlation = fisherz(correlation),
     task_1 = case_when(
       task_1 == 'axcpt' ~ 'AX-CPT', 
       task_1 == 'cuedts' ~ 'Cued TS', 
@@ -304,7 +305,7 @@ corr_trend_plot <- ggplot(
   facet_grid(session_1 ~ session_2) +
   scale_y_continuous(limits = c(-1, 1)) +
   labs(
-    y = "Correlation",
+    y = "Correlation (Fisher-z trans.)",
     x = "Weight type",
     shape = "Condition"
   ) +
@@ -346,3 +347,4 @@ ggsave(
 )
 
 system("open 4_hyp_3_optimal/plot_trend_hyp3/trend_hyp3.png")
+

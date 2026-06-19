@@ -92,14 +92,14 @@ rm(axcpt_data, cuedts_data, sternberg_data, stroop_data)
 
 
 # ---- function for ICC ----
-calc_corrs <- function(data_temp, rt_weighting){
+calc_corrs <- function(data_temp, rt_weighting, er_weighting){
   # calculate BIS with choseen weighting
   data_temp <- data_temp |>
     group_by(session, task, phase) |>
     mutate(
       z_RT = as.numeric(scale(mean_RT)),
       z_ER = as.numeric(scale(ER)),
-      BIS = - (rt_weighting) * z_RT - (1 - rt_weighting) * z_ER # afterwards could be test retest
+      BIS = - (rt_weighting) * z_RT - (er_weighting) * z_ER # afterwards could be test retest
     ) |>
     select(-c('z_RT', 'z_ER', 'mean_RT', 'ER')) |>
     ungroup()
@@ -141,7 +141,8 @@ calc_corrs <- function(data_temp, rt_weighting){
 
 # ---- testing ICC function -----
 # calculating correlation matrixes for different weights
-weights <- seq(0, 1, by = 0.05)
+weights_rt <- seq(-1, 1, by = 0.05)
+weights_er <- c(seq(0, 1, by = 0.05), seq(0.95,0, by = - 0.05))
 corr_list <- tibble(
   rt_weight = numeric(),
   task = character(),
@@ -149,10 +150,10 @@ corr_list <- tibble(
   r = numeric(),
   n = numeric()
 )
-for (curr_weight in weights) {
+for (weight_index in seq_along(weights_rt)) {
   mod_data <- all_data
-  curr_corrs <- calc_corrs(mod_data, curr_weight) |>
-    mutate(rt_weight = curr_weight)
+  curr_corrs <- calc_corrs(mod_data, weights_rt[weight_index], weights_er[weight_index]) |>
+    mutate(rt_weight = weights_rt[weight_index])
   corr_list <- rbind(corr_list, curr_corrs)
 }
 
@@ -172,7 +173,7 @@ corr_list <- corr_list |>
 # ---- visualize the trends ----
 
 icc_trend_plot <- ggplot(data = corr_list, aes(x = rt_weight, y = r, group = session, shape = session)) +
-  geom_point(size = 2.5) +
+  geom_point(size = 1.5) +
   geom_line()+
   facet_wrap2(~task, axes = "all") +
   scale_y_continuous(
@@ -212,10 +213,10 @@ icc_trend_plot <- ggplot(data = corr_list, aes(x = rt_weight, y = r, group = ses
 icc_trend_plot
 
 ggsave(
-  "2_hyp_1_icc/plot_trend_hyp1/trend_hyp1.png",
+  "2_hyp_1_icc/plot_trend_hyp1/minus_plus.png",
   icc_trend_plot,
   width = 10,
   height = 8
 )
 
-system("open 2_hyp_1_icc/plot_trend_hyp1/trend_hyp1.png")
+system("open 2_hyp_1_icc/plot_trend_hyp1/minus_plus.png")
