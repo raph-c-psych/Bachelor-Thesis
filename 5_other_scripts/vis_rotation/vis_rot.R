@@ -138,7 +138,7 @@ plot_vector50 <- ggplot(data = temp_data) +
   labs(
     x = "Reaction Time (z-standardized)", 
     y = "Error Rate (z-standardized)",
-    title = 'a. Weight of RT = .50'
+    title = 'a. Weight of RT = 0.5'
   ) +
   
   # scaling axis to be the same and setting ticks
@@ -320,7 +320,7 @@ plot_vector20 <- ggplot(data = temp_data) +
   labs(
     x = "Reaction Time (z-standardized)", 
     y = "Error Rate (z-standardized)",
-    title = 'b. Weight of RT = .20'
+    title = 'b. Weight of RT = 0.2'
   ) +
   
   # scaling axis to be the same and setting ticks

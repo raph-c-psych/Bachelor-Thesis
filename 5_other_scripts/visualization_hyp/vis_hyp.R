@@ -20,7 +20,7 @@ hyp_plot <- ggplot(icc_trends,
   ) +
   labs(
     x = "Weight of RT",
-    y = "Fisher z-standardized ICC",
+    y = "ICC (Fisher-z trans.)",
     color = "Trend"
   ) +
   theme_minimal() +
